@@ -22,6 +22,8 @@
 #include <time.h>
 #include <stdio.h>
 #include <linux/videodev2.h>
+#include <linux/mxcfb.h>
+#include <linux/ipu.h>
 #include "fbtools.h"
 #include "g2d.h"
 
@@ -43,6 +45,7 @@ struct buffer {
         size_t  length;
 };
 
+/*
 struct mxcfb_pos {
         __u16 x;
         __u16 y;
@@ -51,18 +54,23 @@ struct mxcfb_pos {
 struct mxcfb_gbl_alpha {
         int enable;
         int alpha;
-};
+};*/
 
 static const char            *dev_name="/dev/video2";
 //static enum io_method   io = IO_METHOD_MMAP;
-static int              fd = -1;
+static int              fd, fd_ipu;
 struct buffer          *buffers;
 static unsigned int     n_buffers;
 static int              out_buf;
 static int              force_format=1;
 static int              frame_count = 0x7FFFFFFF;
 static FBDEV fbdev;
-struct g2d_buf *g2d_buffers[4];
+struct ipu_task	ipu_task;
+dma_addr_t	ipu_outpaddr;
+int ipu_isize, ipu_osize;
+
+void *ipu_inbuf = NULL;
+void *ipu_outbuf = NULL;
 
 int fb_open(PFBDEV pFbdev)
 {
@@ -132,6 +140,15 @@ int fb_open(PFBDEV pFbdev)
     pFbdev->fb_mem_offset);
     return FALSE;
   }
+  /*ipu_outpaddr = pFbdev->fb_fix.smem_start;
+  ipu_task.output.paddr = ipu_outpaddr;
+  
+  ipu_osize = ipu_task.output.width * ipu_task.output.height * 2; //RGB565, bbp = 2
+  ipu_outbuf = mmap(0, ipu_osize, PROT_READ | PROT_WRITE, MAP_SHARED, fd_ipu, ipu_task.output.paddr);
+  if(!ipu_outbuf) {
+	printf("mmap fail\n");
+	return FALSE; 
+  }*/
 
   return TRUE;
 }
@@ -227,9 +244,16 @@ static int read_frame(uint8_T *rgbBuf)
         }
 
         assert(buf.index < n_buffers);
-        memcpy(g2d_buffers[buf.index]->buf_vaddr, buffers[buf.index].start, buf.bytesused);
-        //g2d_colorspace_convert(g2d_buffers[buf.index], 640, 480, fbdev.fb_fix.smem_start);
-        g2d_colorspace_convert(g2d_buffers[buf.index], 640, 480, rgbBuf);
+	//ipu_outbuf = (void *)rgbBuf;
+	ipu_task.input.format = v4l2_fourcc('Y', 'U', 'Y', 'V');
+	printf("buf.index: %d\n", buf.index);
+	memcpy(ipu_inbuf,buffers[buf.index].start, buf.bytesused);
+	if(ioctl(fd_ipu, IPU_QUEUE_TASK, &ipu_task) < 0){
+		printf("ioctl IPU_QUEUE_TASK fail: (errno = %d)\n", errno);
+                return -1;
+	}
+        //memcpy(g2d_buffers[buf.index]->buf_vaddr, buffers[buf.index].start, buf.bytesused);
+        //g2d_colorspace_convert(g2d_buffers[buf.index], 640, 480, rgbBuf);
         if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
                 errno_exit("VIDIOC_QBUF");
 	
@@ -281,7 +305,7 @@ static void init_mmap(void)
 
         CLEAR(req);
 
-        req.count = 4;
+        req.count = 1;
         req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         req.memory = V4L2_MEMORY_MMAP;
 
@@ -295,11 +319,11 @@ static void init_mmap(void)
                 }
         }
 
-        if (req.count < 2) {
+        /*if (req.count < 2) {
                 fprintf(stderr, "Insufficient buffer memory on %s\\n",
                          dev_name);
                 exit(EXIT_FAILURE);
-        }
+        }*/
 
         buffers = (buffer *)calloc(req.count, sizeof(*buffers));
 
@@ -330,12 +354,6 @@ static void init_mmap(void)
 
                 if (MAP_FAILED == buffers[n_buffers].start)
                         errno_exit("mmap");
-                g2d_buffers[n_buffers] = g2d_alloc(640*480*2, 0);//alloc physical contiguous memory for source image data
-                if(!g2d_buffers[n_buffers]) {
-                        printf("Fail to allocate physical memory for image buffer!\n");
-                        return;
-                }
-
         }
 }
 
@@ -455,6 +473,78 @@ static void open_device(void)
         }
 }
 
+void config_ipu(unsigned int in_pixfmt, unsigned int out_pixfmt) {
+	memset(&ipu_task, 0, sizeof(ipu_task));
+	ipu_task.input.width = FRAME_WIDTH;
+	ipu_task.input.height = FRAME_HEIGHT;
+	ipu_task.output.width = FRAME_WIDTH;
+	ipu_task.output.height = FRAME_HEIGHT;
+	ipu_task.output.rotate = 0;
+
+	switch (in_pixfmt)
+	{
+	case IPU_PIX_FMT_YUYV:
+		ipu_task.input.format = v4l2_fourcc('Y', 'U', 'Y', 'V');
+		break;
+	case IPU_PIX_FMT_RGB24:
+		ipu_task.input.format = v4l2_fourcc('R', 'G', 'B', '3');
+		break;
+	default:
+		ipu_task.input.format = v4l2_fourcc('Y', 'U', 'Y', 'V');
+		break;
+	}
+	
+	switch (out_pixfmt)
+        {
+        case IPU_PIX_FMT_RGB565:
+                ipu_task.output.format = v4l2_fourcc('R', 'G', 'B', 'P');
+                break;
+        case IPU_PIX_FMT_RGB24:
+                ipu_task.output.format = v4l2_fourcc('R', 'G', 'B', '3');
+                break;
+        case IPU_PIX_FMT_BGR24:
+                ipu_task.output.format = v4l2_fourcc('B', 'G', 'R', '3');
+                break;
+        default:
+                ipu_task.output.format = v4l2_fourcc('R', 'G', 'B', 'P');
+                break;
+        }
+}
+
+void init_ipu(){
+	config_ipu(IPU_PIX_FMT_YUYV, IPU_PIX_FMT_BGR24);
+	
+	fd_ipu = open("/dev/mxc_ipu", O_RDWR, 0);
+	if (fd_ipu < 0) {
+                printf("open ipu dev fail\n");
+		return;
+        }
+	ipu_isize = ipu_task.input.paddr = ipu_task.input.width * ipu_task.input.height * 2;
+	if(ioctl(fd_ipu, IPU_ALLOC, &ipu_task.input.paddr) < 0){
+		printf("ioctl IPU_ALLOC fail: (errno = %d)\n", errno);
+		return ;
+	}
+
+	ipu_inbuf = mmap(0, ipu_isize, PROT_READ | PROT_WRITE, MAP_SHARED, fd_ipu, ipu_task.input.paddr);
+        if (!ipu_inbuf) {
+                printf("mmap fail\n");
+                return ;
+        }
+	ipu_osize = ipu_task.output.paddr = ipu_task.output.width * ipu_task.output.height * 3;
+	if(ioctl(fd_ipu, IPU_ALLOC, &ipu_task.output.paddr) < 0){
+                printf("ioctl IPU_ALLOC fail: (errno = %d)\n", errno);
+                return ;
+        }
+
+        ipu_outbuf = mmap(0, ipu_osize, PROT_READ | PROT_WRITE, MAP_SHARED, fd_ipu, ipu_task.output.paddr);
+        if (!ipu_inbuf) {
+                printf("mmap fail\n");
+                return ;
+        }
+
+
+
+}
 int main()
 {
     /* Allocate input and output image buffers */
@@ -474,6 +564,8 @@ int main()
     /* Initialize video viewer */
     //opencvInitVideoViewer(winNameOut);
 
+    init_ipu();
+
     memset(&fbdev, 0, sizeof(FBDEV));
     strcpy(fbdev.dev, "/dev/fb1");
     if(fb_open(&fbdev)==FALSE)
@@ -482,15 +574,6 @@ int main()
        return 0;
     }
     
-    g2d_inRGB = g2d_alloc(640*480*4, 0);//alloc physical contiguous memory for source image data
-    if(!g2d_inRGB) {
-           printf("Fail to allocate physical memory for image buffer!\n");
-           return 0;
-    }
-    if (g2d_open(&g2dHandle) == -1 || g2dHandle == NULL) {
-            printf("Fail to open g2d device!\n");
-            return 0;
-    }
     open_device();
     init_device();
     start_capturing();
@@ -550,7 +633,7 @@ int main()
          *                            unsigned char outRGB[921600]) *
          * **********************************************************/
         begin = clock();
-        faceDetectionARMKernel(inRGB, (unsigned char*)fbdev.fb_mem);
+        faceDetectionARMKernel((const unsigned char *)ipu_outbuf, (unsigned char*)fbdev.fb_mem);
         //faceDetectionARMKernel((const unsigned char*)g2d_inRGB->buf_vaddr, (unsigned char*)fbdev.fb_mem);
         //faceDetectionARMKernel(inRGB, outRGB);
 	end = clock();
