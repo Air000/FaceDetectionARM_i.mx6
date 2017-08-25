@@ -156,6 +156,91 @@ void cArrayToMat(const ImageDataType *in, int numRows, int numCols, bool isRGB ,
 #endif
 }
 
+/*template <typename ImageDataType>
+void cSmallImgsToBigImg(const ImageDataType *in, int numRows, int numCols, bool isRGB , cv::Mat &out)
+{
+    ImageDataType *imgData = (ImageDataType *)in;
+
+	// assert that mxArray is 2D or 3D
+    const int nChannels(isRGB ? 3 : 1);       
+    int type = CV_MAKETYPE(cv::DataType<ImageDataType>::type,          
+                           (int) nChannels);
+
+    // allocates new matrix data unless the matrix already 
+    // has specified size and type.
+    // previous data is unreferenced if needed.
+    out.create(static_cast<int32_T>(numRows),
+               static_cast<int32_T>(numCols),
+               type);
+
+    ImageDataType *dst = reinterpret_cast<ImageDataType *>(out.data);
+
+#ifdef PARALLEL
+    vector<thread> workers;
+    int blocks = numRows / NUM_THREADS;
+    int start = 0, end = blocks;
+#endif
+
+    // convert column-major to row-major and interleave pixel data. OpenCV
+    // stores multi-channel data in the interleaved format.        
+    if (nChannels == 1)        
+    {
+#ifdef PARALLEL
+        for( int t = 1; t <= NUM_THREADS; t++ )
+        {
+            if( t == NUM_THREADS )
+                end += numRows % NUM_THREADS;
+
+            workers.push_back( thread(copyToMat<ImageDataType>, imgData, &dst[start*numCols], start, end, numRows, numCols) );
+            start = end;
+            end = start + blocks;
+        }
+#else
+        for (int i = 0; i < numRows; ++i)       
+        {         
+            for (int j = 0; j < numCols; ++j) 
+            {
+                *dst++ = imgData[i + j*numRows];
+            }
+        }
+#endif
+    }
+    else
+    {
+#ifdef PARALLEL
+        // assert that there are 3 color planes                                                                                                                                                                    
+        for( int t = 1; t <= NUM_THREADS; t++ )
+        {
+            if( t == NUM_THREADS )
+                end += numRows % NUM_THREADS;
+
+            workers.push_back( thread(copyToMatBGR<ImageDataType>, imgData, &dst[start*numCols*nChannels],  start, end, numRows, numCols, nChannels) );
+            start = end;
+            end = start + blocks;
+        }
+#else
+        int rc = numRows*numCols; 
+        for (int i = 0; i < numRows; ++i)                
+        {
+            for (int j = 0; j < numCols; ++j)
+            {
+                // OpenCV uses BGR ordering so we need to supply the data
+                // in the proper order, by counting backwards
+                for (int k = (int)(nChannels-1); k >= 0; --k)
+                {
+                    *dst++ = imgData[i + j*numRows + k*rc];
+                }
+            }
+        }
+#endif
+    } 
+
+#ifdef PARALLEL
+    for( thread &th : workers )
+        th.join();
+#endif
+}*/
+
 template <typename ImageDataType>
 void copyToArray(ImageDataType *src, ImageDataType *dst, int start, int end , int numRows, int numCols)
 {
@@ -266,6 +351,85 @@ void cArrayFromMat(ImageDataType *outFeatures, const cv::Mat &in)
 #endif
 }
 
+template <typename ImageDataType>
+void cMatrixImgsFromBigImg(uint8_T *outFeatures, uint8_T *inData, int w, int h)
+{
+     //const int nDims = (in.channels() == 1 ? 2 : 3);
+    int dims[3];
+    dims[0] = h;
+    dims[1] = w;
+    dims[2] = 3;
+
+    uint8_T *imgData = (uint8_T *)outFeatures;
+    const int   numRows(dims[0]), numCols(dims[1]);    
+    const int channels = 3;
+    uint8_T *src = inData;
+
+#ifdef PARALLEL
+    vector<thread> workers;
+    int blocks = numRows / NUM_THREADS;
+    int start = 0, end = blocks;
+#endif
+
+    // convert column-major to row-major and interleave pixel data. OpenCV
+    // stores multi-channel data in the interleaved format.        
+    if (channels == 1)        
+    {
+#if PARALLEL
+        for( int t = 1; t <= NUM_THREADS; t++ )
+        {
+            if( t == NUM_THREADS )
+                end += numRows % NUM_THREADS;
+
+            workers.push_back( thread(copyToArray<uint8_T>, &src[start*numCols], imgData, start, end, numRows, numCols) );
+            start = end;
+            end = start + blocks;
+        }
+#else
+        // assert (nDims == 2);
+        for (int i = 0; i < numRows; ++i)       
+        {         
+            for (int j = 0; j < numCols; ++j) 
+            {
+                imgData[i + j*numRows] = *src++;
+            }
+        }
+#endif
+    }
+    else
+    {
+#if PARALLEL
+        // assert that there are 3 color planes (i.e., dims[2] == 3); 
+        for( int t = 1; t <= NUM_THREADS; t++ )
+        {
+            if( t == NUM_THREADS )
+                end += numRows % NUM_THREADS;
+
+            workers.push_back( thread(copyToArrayBGR<uint8_T>, &src[start*numCols*channels], imgData, start, end, numRows, numCols, channels) );
+            start = end;
+            end = start + blocks;
+        }
+#else
+        int rc = numRows*numCols; 
+        for (int i = 0; i < numRows; ++i)                
+        {
+            for (int j = 0; j < numCols; ++j)
+            {
+                // Count backwards since OpenCV uses BGR ordering of color data
+                for (int k = channels-1; k >= 0; --k)
+                {
+                    imgData[i + j*numRows + k*rc] = *src++;
+                }
+            }
+        }
+#endif
+    }    
+
+#ifdef PARALLEL     
+    for( thread &th : workers )
+        th.join();
+#endif   
+}
 EXTERN_C LIBMWCVSTRT_API void cvRectToBoundingBox(const std::vector<cv::Rect> & rects, int32_T *boundingBoxes);
 
 

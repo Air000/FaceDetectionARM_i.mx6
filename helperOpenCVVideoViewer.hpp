@@ -8,5 +8,5 @@
 EXTERN_C LIBMWCVSTRT_API boolean_T opencvIsEscKeyPressed(void);
 EXTERN_C LIBMWCVSTRT_API void opencvInitVideoViewer(const char*winName);
 EXTERN_C LIBMWCVSTRT_API void opencvDisplayRGB(uint8_T *rgbU8, int frameHeight, int frameWidth, const char *winName);
-
+EXTERN_C LIBMWCVSTRT_API void mergeToBigImgAndDisp(uint8_T *rgbU8, int numRow, int numCols, void *dst);
 #endif

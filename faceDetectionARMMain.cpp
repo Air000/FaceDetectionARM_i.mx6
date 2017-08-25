@@ -252,8 +252,7 @@ static int read_frame(uint8_T *rgbBuf)
 		printf("ioctl IPU_QUEUE_TASK fail: (errno = %d)\n", errno);
                 return -1;
 	}
-        //memcpy(g2d_buffers[buf.index]->buf_vaddr, buffers[buf.index].start, buf.bytesused);
-        //g2d_colorspace_convert(g2d_buffers[buf.index], 640, 480, rgbBuf);
+        memcpy(rgbBuf, ipu_outbuf, FRAME_WIDTH * FRAME_HEIGHT * 3);
         if (-1 == xioctl(fd, VIDIOC_QBUF, &buf))
                 errno_exit("VIDIOC_QBUF");
 	
@@ -548,14 +547,15 @@ void init_ipu(){
 int main()
 {
     /* Allocate input and output image buffers */
-    uint8_T inRGB[FRAME_WIDTH * FRAME_HEIGHT * 3],
+    uint8_T capRGB[FRAME_WIDTH * FRAME_HEIGHT * 3],
+    	    inRGB[FRAME_WIDTH * FRAME_HEIGHT * 3],
             outRGB[FRAME_WIDTH * FRAME_HEIGHT * 3];
     clock_t begin , end;
 
     /* Local variables */
     const char *winNameOut = "Output Video";
     const int frameWidth = FRAME_WIDTH, frameHeight = FRAME_HEIGHT;
-    unsigned uRunTime_capture, uRunTime_face, uRunTime_draw;
+    unsigned uRunTime_capture, uRunTime_trans, uRunTime_face, uRunTime_draw;
     void* capture = 0;
 
     /* Initialize camera */
@@ -590,8 +590,8 @@ int main()
         begin = clock();      
         /* Capture frame from camera */
         //opencvCaptureRGBFrameAndCopy(capture, inRGB);
-	read_frame(inRGB);
-	/*for (;;) {
+	//read_frame(capRGB);
+        for (;;) {
                 fd_set fds;
                 struct timeval tv;
                 int r;
@@ -616,12 +616,17 @@ int main()
                         exit(EXIT_FAILURE);
                 }
 
-                if (read_frame(g2d_inRGB))
+                if (read_frame(capRGB))
                         break;
                 //EAGAIN - continue select loop.
-        }*/
+        }
+
+        end = clock();
+        uRunTime_capture = (end - begin) * 1.0 / CLOCKS_PER_SEC * 1000;
+        begin = clock();
+	splitIntoSmallImgs(capRGB, inRGB, frameWidth, frameHeight);        
 	end = clock();
-	uRunTime_capture = (end - begin) * 1.0 / CLOCKS_PER_SEC * 1000;
+	uRunTime_trans = (end - begin) * 1.0 / CLOCKS_PER_SEC * 1000;
         /* **********************************************************
          * Call MATLAB Coder generated kernel function.             *
          * This function detects faces and inserts bounding boxes   *
@@ -633,18 +638,20 @@ int main()
          *                            unsigned char outRGB[921600]) *
          * **********************************************************/
         begin = clock();
-        faceDetectionARMKernel((const unsigned char *)ipu_outbuf, (unsigned char*)fbdev.fb_mem);
+        //faceDetectionARMKernel(inRGB, (unsigned char*)fbdev.fb_mem);
         //faceDetectionARMKernel((const unsigned char*)g2d_inRGB->buf_vaddr, (unsigned char*)fbdev.fb_mem);
-        //faceDetectionARMKernel(inRGB, outRGB);
+        faceDetectionARMKernel(inRGB, outRGB);
+	//memcpy((void *)fbdev.fb_mem,(void *)inRGB, frameHeight*frameWidth*3);
 	end = clock();
 	uRunTime_face = (end - begin) * 1.0 / CLOCKS_PER_SEC * 1000;
 
         /* Display output image */
         begin = clock();
+        mergeToBigImgAndDisp(outRGB, frameHeight, frameWidth, (void *)fbdev.fb_mem);
         //opencvDisplayRGB(outRGB, frameHeight, frameWidth, winNameOut);
 	end = clock();
 	uRunTime_draw = (end - begin) * 1.0 / CLOCKS_PER_SEC * 1000;
-	printf("kevin uRuntime_capture is %d ms, uRuntime_face is %d ms, uRuntime_draw is %d ms\n", uRunTime_capture, uRunTime_face, uRunTime_draw);
+	printf("kevin uRuntime_capture is %d ms, uRunTime_trans is %d ms, \n uRuntime_face is %d ms, uRuntime_draw is %d ms\n", uRunTime_capture, uRunTime_trans, uRunTime_face, uRunTime_draw);
     }
 
     /* Call MATLAB Coder generated terminate function */

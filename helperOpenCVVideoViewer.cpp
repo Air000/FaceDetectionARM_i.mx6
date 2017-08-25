@@ -30,4 +30,10 @@ void opencvDisplayRGB(uint8_T *rgbU8, int numRow, int numCols, const char *winNa
     imshow(winName, rgbMat); waitKey(30); // wait to draw now
 }
 
+void mergeToBigImgAndDisp(uint8_T *rgbU8, int numRow, int numCols, void *dst)
+{
+   cv::Mat rgbMat(numRow, numCols, CV_8UC3, Scalar(0, 0, 0)); 
+   cArrayToMat<uint8_T>(rgbU8, numRow, numCols, true, rgbMat);
+   memcpy(dst, (void *)rgbMat.data, numRow*numCols*rgbMat.channels());
+} 
 
