@@ -469,12 +469,12 @@ int main()
     void* capture = 0;
 
     /* Initialize camera */
-    //capture = (void *)opencvInitCam(frameWidth, frameHeight);
+    capture = (void *)opencvInitCam(frameWidth, frameHeight);
 
     /* Initialize video viewer */
-    //opencvInitVideoViewer(winNameOut);
+    opencvInitVideoViewer(winNameOut);
 
-    memset(&fbdev, 0, sizeof(FBDEV));
+    /*memset(&fbdev, 0, sizeof(FBDEV));
     strcpy(fbdev.dev, "/dev/fb1");
     if(fb_open(&fbdev)==FALSE)
     {
@@ -493,7 +493,7 @@ int main()
     }
     open_device();
     init_device();
-    start_capturing();
+    start_capturing();*/
     /* Call MATLAB Coder generated initialize function */
     faceDetectionARMKernel_initialize();
 
@@ -506,8 +506,8 @@ int main()
     {
         begin = clock();      
         /* Capture frame from camera */
-        //opencvCaptureRGBFrameAndCopy(capture, inRGB);
-	read_frame(inRGB);
+        opencvCaptureRGBFrameAndCopy(capture, inRGB);
+	//read_frame(inRGB);
 	/*for (;;) {
                 fd_set fds;
                 struct timeval tv;
@@ -550,15 +550,15 @@ int main()
          *                            unsigned char outRGB[921600]) *
          * **********************************************************/
         begin = clock();
-        faceDetectionARMKernel(inRGB, (unsigned char*)fbdev.fb_mem);
+        //faceDetectionARMKernel(inRGB, (unsigned char*)fbdev.fb_mem);
         //faceDetectionARMKernel((const unsigned char*)g2d_inRGB->buf_vaddr, (unsigned char*)fbdev.fb_mem);
-        //faceDetectionARMKernel(inRGB, outRGB);
+        faceDetectionARMKernel(inRGB, outRGB);
 	end = clock();
 	uRunTime_face = (end - begin) * 1.0 / CLOCKS_PER_SEC * 1000;
 
         /* Display output image */
         begin = clock();
-        //opencvDisplayRGB(outRGB, frameHeight, frameWidth, winNameOut);
+        opencvDisplayRGB(outRGB, frameHeight, frameWidth, winNameOut);
 	end = clock();
 	uRunTime_draw = (end - begin) * 1.0 / CLOCKS_PER_SEC * 1000;
 	printf("kevin uRuntime_capture is %d ms, uRuntime_face is %d ms, uRuntime_draw is %d ms\n", uRunTime_capture, uRunTime_face, uRunTime_draw);
@@ -566,10 +566,6 @@ int main()
 
     /* Call MATLAB Coder generated terminate function */
     faceDetectionARMKernel_terminate();
-    stop_capturing();
-    uninit_device();
-    close_device();
-    g2d_close(g2dHandle);
     /* 0 - success */
     return 0;
 }
